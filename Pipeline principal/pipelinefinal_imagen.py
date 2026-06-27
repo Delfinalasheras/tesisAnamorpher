@@ -150,7 +150,8 @@ def _norm(w):
 
 def consenso_texto(image_path, scale_methods=('bilinear', 'bicubic', 'nearest'),
                    sizes=(255, 512, 800, 1092, 1600), prep_mode='adaptive',
-                   min_conf=30, min_votos=4, pos_tol=0.06, sim_tol=0.34, min_len=2):
+                   min_conf=30, min_votos=4, pos_tol=0.06, sim_tol=0.34, min_len=2,
+                   min_distinct=2, umbral_corto=3, min_votos_corto=6):
     # 1. recolectar TODAS las detecciones de las 12 reconstrucciones
     dets = []
     for m in scale_methods:
@@ -160,7 +161,7 @@ def consenso_texto(image_path, scale_methods=('bilinear', 'bicubic', 'nearest'),
                 if nw:
                     dets.append({**wd, 'nword': nw, 'src': (m, s)})
 
-    # 2. agrupar por palabra parecida + posicion cercana (semilla = mayor conf)
+    # 2. agrupar por palabra parecida
     grupos = []
     for d in sorted(dets, key=lambda x: -x['conf']):
         for g in grupos:
@@ -184,9 +185,20 @@ def consenso_texto(image_path, scale_methods=('bilinear', 'bicubic', 'nearest'),
         g['conf']     = float(np.mean([it['conf'] for it in g['items']]))
         g['box_norm'] = tuple(np.median(np.array([it['box_norm'] for it in g['items']]), axis=0))
 
-    # 3.b descartar "letras sueltas": tokens de 1 caracter son ruido del fondo
-    #     texturado (votan alto por ser consistentes, no porque sean texto real)
-    fuertes = [g for g in fuertes if len(g['palabra']) >= min_len]
+    # 3.b filtros anti-ruido de fondo texturado.
+    def _es_texto(g):
+        p = g['palabra']
+        # descarte original: tokens de 1 caracter (ruido de fondo texturado)
+        if len(p) < min_len:
+            return False
+        # "EE", "II", "OOO" -> 1 sola letra distinta.
+        if len(set(p)) < min_distinct:
+            return False
+        # exigencia para tokens cortos y evitar falsos positivoooss
+        if len(p) < umbral_corto and g['votos'] < min_votos_corto:
+            return False
+        return True
+    fuertes = [g for g in fuertes if _es_texto(g)]
 
     # 4. ordenar en lectura: por renglon (cy) y luego por x
     fuertes.sort(key=lambda g: (round(g['cy'] / 0.05), g['cx']))
@@ -457,6 +469,6 @@ def pipeline(image_path, modelo, vista_metodo='nearest', vista_size=(512, 512)):
     return {'pred': pred, 'etiqueta': etiqueta, 'proba': prob.tolist()}
 
 resultado = pipeline(
-    "/content/drive/MyDrive/Imagenes tesis/POCBicubic.png",
+    "/content/drive/MyDrive/Imagenes tesis/train_data/bilinear_train/31.png",
     modelo,
 )
